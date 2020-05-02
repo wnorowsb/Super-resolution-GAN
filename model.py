@@ -1,117 +1,114 @@
-import math
+# -*- coding: utf-8 -*-
+"""Implements SRGAN models: https://arxiv.org/abs/1609.04802
+TODO:
+"""
+
 import torch
-from torch import nn
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.autograd import Variable
 
+def swish(x):
+    return x * F.sigmoid(x)
 
-class Generator(nn.Module):
-    def __init__(self, scale_factor):
-        upsample_block_num = int(math.log(scale_factor, 2))
-
-        super(Generator, self).__init__()
-        self.block1 = nn.Sequential(
-            nn.Conv2d(3, 64, kernel_size=9, padding=4),
-            nn.PReLU()
-        )
-        self.block2 = ResidualBlock(64)
-        self.block3 = ResidualBlock(64)
-        self.block4 = ResidualBlock(64)
-        self.block5 = ResidualBlock(64)
-        self.block6 = ResidualBlock(64)
-        self.block7 = nn.Sequential(
-            nn.Conv2d(64, 64, kernel_size=3, padding=1),
-            nn.BatchNorm2d(64)
-        )
-        block8 = [UpsampleBLock(64, 2) for _ in range(upsample_block_num)]
-        block8.append(nn.Conv2d(64, 3, kernel_size=9, padding=4))
-        self.block8 = nn.Sequential(*block8)
+class FeatureExtractor(nn.Module):
+    def __init__(self, cnn, feature_layer=11):
+        super(FeatureExtractor, self).__init__()
+        self.features = nn.Sequential(*list(cnn.features.children())[:(feature_layer+1)])
 
     def forward(self, x):
-        block1 = self.block1(x)
-        block2 = self.block2(block1)
-        block3 = self.block3(block2)
-        block4 = self.block4(block3)
-        block5 = self.block5(block4)
-        block6 = self.block6(block5)
-        block7 = self.block7(block6)
-        block8 = self.block8(block1 + block7)
+        return self.features(x)
 
-        return (torch.tanh(block8) + 1) / 2
 
+class residualBlock(nn.Module):
+    def __init__(self, in_channels=64, k=3, n=64, s=1):
+        super(residualBlock, self).__init__()
+
+        self.conv1 = nn.Conv2d(in_channels, n, k, stride=s, padding=1)
+        self.bn1 = nn.BatchNorm2d(n)
+        self.conv2 = nn.Conv2d(n, n, k, stride=s, padding=1)
+        self.bn2 = nn.BatchNorm2d(n)
+
+    def forward(self, x):
+        y = swish(self.bn1(self.conv1(x)))
+        return self.bn2(self.conv2(y)) + x
+
+class upsampleBlock(nn.Module):
+    # Implements resize-convolution
+    def __init__(self, in_channels, out_channels):
+        super(upsampleBlock, self).__init__()
+        self.conv = nn.Conv2d(in_channels, out_channels, 3, stride=1, padding=1)
+        self.shuffler = nn.PixelShuffle(2)
+
+    def forward(self, x):
+        return swish(self.shuffler(self.conv(x)))
+
+class Generator(nn.Module):
+    def __init__(self, n_residual_blocks, upsample_factor):
+        super(Generator, self).__init__()
+        self.n_residual_blocks = n_residual_blocks
+        self.upsample_factor = upsample_factor
+
+        self.conv1 = nn.Conv2d(3, 64, 9, stride=1, padding=4)
+
+        for i in range(self.n_residual_blocks):
+            self.add_module('residual_block' + str(i+1), residualBlock())
+
+        self.conv2 = nn.Conv2d(64, 64, 3, stride=1, padding=1)
+        self.bn2 = nn.BatchNorm2d(64)
+
+        for i in range(self.upsample_factor//2):
+            self.add_module('upsample' + str(i+1), upsampleBlock(64, 256))
+
+        self.conv3 = nn.Conv2d(64, 3, 9, stride=1, padding=4)
+
+    def forward(self, x):
+        x = swish(self.conv1(x))
+
+        y = x.clone()
+        for i in range(self.n_residual_blocks):
+            y = self.__getattr__('residual_block' + str(i+1))(y)
+
+        x = self.bn2(self.conv2(y)) + x
+
+        for i in range(self.upsample_factor//2):
+            x = self.__getattr__('upsample' + str(i+1))(x)
+
+        return self.conv3(x)
 
 class Discriminator(nn.Module):
     def __init__(self):
         super(Discriminator, self).__init__()
-        self.net = nn.Sequential(
-            nn.Conv2d(3, 64, kernel_size=3, padding=1),
-            nn.LeakyReLU(0.2),
+        self.conv1 = nn.Conv2d(3, 64, 3, stride=1, padding=1)
 
-            nn.Conv2d(64, 64, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(64),
-            nn.LeakyReLU(0.2),
+        self.conv2 = nn.Conv2d(64, 64, 3, stride=2, padding=1)
+        self.bn2 = nn.BatchNorm2d(64)
+        self.conv3 = nn.Conv2d(64, 128, 3, stride=1, padding=1)
+        self.bn3 = nn.BatchNorm2d(128)
+        self.conv4 = nn.Conv2d(128, 128, 3, stride=2, padding=1)
+        self.bn4 = nn.BatchNorm2d(128)
+        self.conv5 = nn.Conv2d(128, 256, 3, stride=1, padding=1)
+        self.bn5 = nn.BatchNorm2d(256)
+        self.conv6 = nn.Conv2d(256, 256, 3, stride=2, padding=1)
+        self.bn6 = nn.BatchNorm2d(256)
+        self.conv7 = nn.Conv2d(256, 512, 3, stride=1, padding=1)
+        self.bn7 = nn.BatchNorm2d(512)
+        self.conv8 = nn.Conv2d(512, 512, 3, stride=2, padding=1)
+        self.bn8 = nn.BatchNorm2d(512)
 
-            nn.Conv2d(64, 128, kernel_size=3, padding=1),
-            nn.BatchNorm2d(128),
-            nn.LeakyReLU(0.2),
-
-            nn.Conv2d(128, 128, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(128),
-            nn.LeakyReLU(0.2),
-
-            nn.Conv2d(128, 256, kernel_size=3, padding=1),
-            nn.BatchNorm2d(256),
-            nn.LeakyReLU(0.2),
-
-            nn.Conv2d(256, 256, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(256),
-            nn.LeakyReLU(0.2),
-
-            nn.Conv2d(256, 512, kernel_size=3, padding=1),
-            nn.BatchNorm2d(512),
-            nn.LeakyReLU(0.2),
-
-            nn.Conv2d(512, 512, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(512),
-            nn.LeakyReLU(0.2),
-
-            nn.AdaptiveAvgPool2d(1),
-            nn.Conv2d(512, 1024, kernel_size=1),
-            nn.LeakyReLU(0.2),
-            nn.Conv2d(1024, 1, kernel_size=1)
-        )
+        # Replaced original paper FC layers with FCN
+        self.conv9 = nn.Conv2d(512, 1, 1, stride=1, padding=1)
 
     def forward(self, x):
-        batch_size = x.size(0)
-        return torch.sigmoid(self.net(x).view(batch_size))
+        x = swish(self.conv1(x))
 
+        x = swish(self.bn2(self.conv2(x)))
+        x = swish(self.bn3(self.conv3(x)))
+        x = swish(self.bn4(self.conv4(x)))
+        x = swish(self.bn5(self.conv5(x)))
+        x = swish(self.bn6(self.conv6(x)))
+        x = swish(self.bn7(self.conv7(x)))
+        x = swish(self.bn8(self.conv8(x)))
 
-class ResidualBlock(nn.Module):
-    def __init__(self, channels):
-        super(ResidualBlock, self).__init__()
-        self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, padding=1)
-        self.bn1 = nn.BatchNorm2d(channels)
-        self.prelu = nn.PReLU()
-        self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, padding=1)
-        self.bn2 = nn.BatchNorm2d(channels)
-
-    def forward(self, x):
-        residual = self.conv1(x)
-        residual = self.bn1(residual)
-        residual = self.prelu(residual)
-        residual = self.conv2(residual)
-        residual = self.bn2(residual)
-
-        return x + residual
-
-
-class UpsampleBLock(nn.Module):
-    def __init__(self, in_channels, up_scale):
-        super(UpsampleBLock, self).__init__()
-        self.conv = nn.Conv2d(in_channels, in_channels * up_scale ** 2, kernel_size=3, padding=1)
-        self.pixel_shuffle = nn.PixelShuffle(up_scale)
-        self.prelu = nn.PReLU()
-
-    def forward(self, x):
-        x = self.conv(x)
-        x = self.pixel_shuffle(x)
-        x = self.prelu(x)
-        return x
+        x = self.conv9(x)
+        return F.sigmoid(F.avg_pool2d(x, x.size()[2:])).view(x.size()[0], -1)
