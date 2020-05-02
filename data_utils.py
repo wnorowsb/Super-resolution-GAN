@@ -3,7 +3,7 @@ from os.path import join
 
 from PIL import Image
 from torch.utils.data.dataset import Dataset
-from torchvision.transforms import Compose, RandomCrop, ToTensor, ToPILImage, CenterCrop, Resize
+from torchvision.transforms import Compose, RandomCrop, ToTensor, ToPILImage, CenterCrop, Resize, Normalize
 
 
 def is_image_file(filename):
@@ -16,8 +16,9 @@ def calculate_valid_crop_size(crop_size, upscale_factor):
 
 def train_hr_transform(crop_size):
     return Compose([
-        RandomCrop(crop_size),
         ToTensor(),
+        Normalize(mean = [0.485, 0.456, 0.406],
+                  std = [0.229, 0.224, 0.225])
     ])
 
 inter_dict = {
@@ -29,9 +30,11 @@ inter_dict = {
 
 def train_lr_transform(crop_size, upscale_factor, inter=Image.BICUBIC):
     return Compose([
-        ToPILImage(),
+        #ToPILImage(),
         Resize(crop_size // upscale_factor, interpolation=inter),
-        ToTensor()
+        ToTensor(),
+        Normalize(mean = [0.485, 0.456, 0.406],
+                  std = [0.229, 0.224, 0.225])
     ])
 
 
@@ -48,13 +51,14 @@ class TrainDatasetFromFolder(Dataset):
     def __init__(self, dataset_dir, crop_size, upscale_factor, interpolation='bicubic'):
         super(TrainDatasetFromFolder, self).__init__()
         self.image_filenames = [join(dataset_dir, x) for x in listdir(dataset_dir) if is_image_file(x)]
-        crop_size = calculate_valid_crop_size(crop_size, upscale_factor)
+        self.crop = RandomCrop(calculate_valid_crop_size(crop_size, upscale_factor))
         self.hr_transform = train_hr_transform(crop_size)
         self.lr_transform = train_lr_transform(crop_size, upscale_factor, inter=inter_dict[interpolation])
 
     def __getitem__(self, index):
-        hr_image = self.hr_transform(Image.open(self.image_filenames[index]))
-        lr_image = self.lr_transform(hr_image)
+        cropped = self.crop(Image.open(self.image_filenames[index]))
+        hr_image = self.hr_transform(cropped)
+        lr_image = self.lr_transform(cropped)
         return lr_image, hr_image
 
     def __len__(self):
