@@ -1,3 +1,8 @@
+'''
+This file takes one trained generator model and tests it with 
+three different interpolations used for image downscaling.
+'''
+
 import argparse
 import os
 from math import log10
@@ -22,7 +27,7 @@ parser.add_argument('--crop_size', default=60, type=int, help='training images c
 parser.add_argument('--interpolation', default='bilinear', type=str, help='Interpolation the model was learned for')
 parser.add_argument('--upscale_factor', default=4, type=int, choices=[2, 4, 8],
                     help='super resolution upscale factor')
-parser.add_argument('--generator_weights', default='./epochs/netG_epoch_norm_lanczos_4_30.pth', type=str,
+parser.add_argument('--generator_weights', default='./epochs/netG_epoch_norm_bilinear_4_30.pth', type=str,
                     help='path for generator net to test')
 
 
@@ -60,7 +65,7 @@ if __name__ == '__main__':
         
         if torch.cuda.is_available():
             netG.cuda()
-        #    generator_criterion.cuda()
+            generator_criterion.cuda()
             
         netG.eval()
         out_path = 'valing_results/SRF_' + str(UPSCALE_FACTOR) + INTERPOLATION + '/'
@@ -106,8 +111,6 @@ if __name__ == '__main__':
                         sr_hr[k] = unnormalize(v)
                         hr[k] = unnormalize(hr[k])
                     val_images.extend(
-                        #[display_transform()(val_hr_restore.squeeze(0)), display_transform()(hr.data.cpu().squeeze(0)),
-                        #display_transform()(sr.data.cpu().squeeze(0))])
                         [val_hr_restore.squeeze(0), hr.data.cpu().squeeze(0),
                         sr.data.cpu().squeeze(0)])
                     utils.save_image(sr_hr, out_path + '%s_unscalled.png' % (INTERPOLATION), padding=5)
@@ -118,7 +121,7 @@ if __name__ == '__main__':
             index = 1
             for image in val_save_bar:
                 image = utils.make_grid(image, nrow=3, padding=5)
-                utils.save_image(image, out_path + '%s_base_%s_.png' % (INTERPOLATION), padding=5)
+                utils.save_image(image, out_path + '%s_base_%s_.png' % (INTERPOLATION,trans), padding=5)
             del val_images, val_bar, val_save_bar
 
         # save loss\scores\psnr\ssim
